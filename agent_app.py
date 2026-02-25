@@ -1,136 +1,104 @@
 import streamlit as st
-import time
 from openai import OpenAI
 
-# 配置 Kimi (Moonshot) API 客户端
+# 1. 配置 Kimi (Moonshot) API 客户端
 client = OpenAI(
     api_key=st.secrets["MOONSHOT_API_KEY"],
     base_url="https://api.moonshot.cn/v1",
 )
 
-st.set_page_config(page_title="故障单智能复核 Agent", page_icon="🤖", layout="centered")
+st.set_page_config(page_title="PIA 智能工单 Agent", page_icon="🤖", layout="centered")
 st.markdown("<style>#MainMenu {visibility: hidden;} footer {visibility: hidden;}</style>", unsafe_allow_html=True)
 
-if 'step' not in st.session_state:
-    st.session_state.step = 1
-if 'initial_input' not in st.session_state:
-    st.session_state.initial_input = ""
-
-st.title("🤖 硬件交付工单智能复核 (Powered by Kimi)")
-st.caption("AI 自动识别逻辑断层，引导补充规范数据，一键生成交付报告。")
+st.title("🤖 硬件交付 PIA 智能复核 Agent")
+st.caption("Powered by Kimi | 只有满足现象(P)、动作交叉验证(I)、现状(A)的逻辑闭环，才会生成最终报告。")
 st.divider()
 
-# ================= 调用 Kimi 生成追问 =================
-def generate_dynamic_questions(initial_record):
-    prompt = f"""
-    你现在是一个部署在服务器交付与运维工单系统中的【智能工单复核机器人】。
-    你的核心任务是：自动审阅现场工程师提交的故障排查记录，识别其中的逻辑断层和信息缺失，并生成结构化的追问清单。
+# 2. 注入你的灵魂：PIA 核心 Prompt
+SYSTEM_PROMPT = """
+你现在是一位资深的服务器硬件交付项目经理（PM）。你的核心任务是：作为【智能工单复核助手】，通过多轮对话，审查现场工程师提交的故障排查记录，确保其逻辑严密、证据充分，并最终生成标准化交付报告。
 
-    【必须遵守的规则】：
-    1. 只能问现场工程师能回答的操作细节（如：拔插、对调、脚本测试结果、初始报错截图）。严禁提问研发/供应链问题。
-    2. 机器处于交付上架测试阶段，尚未上线。严禁提问线上业务问题。
-    3. 保持客观、专业的 AI 助手语调。不要带有情绪化指责。
+# Core Framework (核心审核框架：PIA 模型)
+你必须严格按照以下【PIA 模型】的标准，逐一核对工程师输入的信息。任何一个环节缺失或存在逻辑断层，你都必须进行拦截并追问。
+1. 【P - Phenomenon (初始现象)】必须包含明确的触发场景（如测试、上电自检）和具体的报错对象及错误码。
+2. 【I - Interventions (排查动作与结果)】必须体现“控制变量法”或“交叉验证”。如果工程师申请更换了核心部件，记录中必须包含验证该部件损坏的交叉测试动作（如：对调后报错跟随部件转移）。只换件不验证必须拦截！
+3. 【A - As-is (当前现状与结论)】必须明确当前机器的最新状态或最终的验收结果。
 
-    【输出格式】：
-    请输出 3 到 5 个最核心的追问，直接以问题呈现，不要输出额外的寒暄和解释。问题要细化到具体的排查动作或结果。
-    
-    以下是工程师的实际排查记录，请分析并生成追问：
-    {initial_record}
-    """
-    try:
-        response = client.chat.completions.create(
-            model="moonshot-v1-8k",
-            messages=[
-                {"role": "system", "content": "你是一个严谨的项目管理助手。"},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3,
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"调用 Kimi 模型时出错啦，请检查 API Key：{e}"
+# Action Rules (执行规则)
+根据工程师当前的输入和历史对话，判断：
 
-# ================= 调用 Kimi 生成最终报告 =================
-def generate_dynamic_report(initial_record, answers):
-    prompt = f"""
-    你是一位资深的服务器交付项目经理。请根据工程师最初提供的排查记录，以及他刚刚补充的详细解答，
-    融合撰写一份结构化、逻辑严密、符合项目交付审计标准的最终故障排查报告。
+**情况 A：信息不全或存在逻辑断层（进入“追问模式”）**
+- 动作：指出缺失的环节，并提出 1-2 个极其具体的疑问。
+- 语气：通俗、平级协作、直奔主题（例如：“辛苦确认一下，换主板前有把 GPU 插到别的槽位交叉验证过吗？”）。绝对不要长篇大论。
 
-    初始排查记录：
-    {initial_record}
+**情况 B：信息完整且逻辑闭环满足 PIA 模型（进入“生成模式”）**
+- 动作：停止提问，直接输出一份结构化的最终报告。
+- 报告格式：严格按照【一、初始故障现象】、【二、排查过程与逻辑闭环】、【三、最终结果与验收确认】三个模块输出。
+- ⚠️ 强制规定：当你判断可以生成最终报告时，你的回复必须且只能以“【最终交付报告】”这六个字作为开头！
+"""
 
-    工程师补充的详细解答：
-    {answers}
+# 3. 初始化会话状态 (记忆功能)
+if "messages" not in st.session_state:
+    # 隐藏的系统级记忆，负责给大模型立规矩
+    st.session_state.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    # 呈现在前端的对话记录
+    st.session_state.display_messages = [
+        {"role": "assistant", "content": "你好！我是智能工单复核助手。请把现场的**排查流水账**发给我，我会基于 PIA 模型（现象-排查动作-现状）帮你查漏补缺。如果未进行交叉验证，我可是会打回来的哦！"}
+    ]
+    st.session_state.is_done = False # 记录是否已成功生成报告
 
-    请直接输出报告正文，包含“一、初始故障现象”、“二、排查过程与逻辑闭环”、“三、最终结果与验收确认”三个标准段落。不要有其他废话。
-    """
-    try:
-        response = client.chat.completions.create(
-            model="moonshot-v1-8k",
-            messages=[
-                {"role": "system", "content": "你是一个资深的服务器交付项目经理。"},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.5,
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"生成报告时出错啦：{e}"
+# 4. 渲染前端历史对话记录
+for msg in st.session_state.display_messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-# ================= UI 流程控制 =================
-if st.session_state.step == 1:
-    with st.chat_message("assistant"):
-        st.write("你好！我是工单复核助手。请把现场的**排查流水账**发给我，我来帮你查漏补缺。")
-    
-    initial_input = st.text_area("📝 粘贴现场排查记录：", height=150)
-    
-    if st.button("开始智能分析 ✨", type="primary", use_container_width=True):
-        if initial_input.strip() == "":
-            st.warning("请先输入排查记录哦！")
-        else:
-            st.session_state.initial_input = initial_input
-            with st.spinner('Kimi 正在推演排查逻辑，寻找信息断层...'):
-                st.session_state.dynamic_questions = generate_dynamic_questions(initial_input)
-            st.session_state.step = 2
-            st.rerun()
-
-elif st.session_state.step == 2:
-    with st.expander("查看原始排查记录", expanded=False):
-        st.info(st.session_state.initial_input)
-
-    with st.chat_message("assistant"):
-        st.write("我分析完了，基于你提供的记录，你需要补充以下关键细节才能闭环：")
+# 5. 核心交互循环
+# 如果还没生成最终报告，就一直显示输入框让工程师补充
+if not st.session_state.is_done:
+    if prompt := st.chat_input("请输入现场排查记录或补充回答..."):
+        # 将工程师的输入显示在屏幕上
+        st.session_state.display_messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
         
-    st.markdown("### 🔍 AI 智能追问")
-    st.markdown(st.session_state.dynamic_questions)
-    
-    st.markdown("---")
-    answers_input = st.text_area("请在此逐条回复上述问题（AI 将自动为您整合）：", height=200)
-    
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        if st.button("返回上一步", use_container_width=True):
-            st.session_state.step = 1
-            st.rerun()
-    with col2:
-        if st.button("生成标准化报告 📝", type="primary", use_container_width=True):
-            if answers_input.strip() == "":
-                st.warning("请填写补充信息！")
-            else:
-                with st.spinner('Kimi 正在撰写标准排查报告...'):
-                    st.session_state.final_report = generate_dynamic_report(
-                        st.session_state.initial_input, 
-                        answers_input
-                    )
-                st.session_state.step = 3
-                st.rerun()
+        # 将输入悄悄加入系统记忆中
+        st.session_state.messages.append({"role": "user", "content": prompt})
 
-elif st.session_state.step == 3:
-    st.success("🎉 报告已由 Kimi 融合生成！逻辑已闭环，符合 PM 审计标准。")
-    report_container = st.container(border=True)
-    with report_container:
-        st.markdown(st.session_state.final_report)
-    
-    if st.button("✨ 处理下一个工单", type="primary"):
-        st.session_state.step = 1
+        # 呼叫大模型进行逻辑裁决
+        with st.chat_message("assistant"):
+            with st.spinner("Agent 正在推演 PIA 逻辑是否闭环..."):
+                try:
+                    response = client.chat.completions.create(
+                        model="moonshot-v1-8k",
+                        messages=st.session_state.messages,
+                        temperature=0.2, # 降低温度，让 AI 更加严谨客观，不发散
+                    )
+                    reply = response.choices[0].message.content
+                    
+                    # 【核心机关】：检测 AI 是否决定放行
+                    if "【最终交付报告】" in reply:
+                        st.success("🎉 逻辑已完美闭环！Agent 已放行并生成标准交付报告。")
+                        st.session_state.is_done = True # 触发开关，锁定输入框
+                        
+                    st.markdown(reply)
+                    
+                    # 将 AI 的回复存入记忆
+                    st.session_state.messages.append({"role": "assistant", "content": reply})
+                    st.session_state.display_messages.append({"role": "assistant", "content": reply})
+                    
+                    # 如果刚才判定完成了，刷新一次页面以隐藏输入框并显示重新开始按钮
+                    if st.session_state.is_done:
+                        st.rerun()
+
+                except Exception as e:
+                    st.error(f"调用 API 失败，请检查网络或 Key：{e}")
+
+# 6. 报告生成后的重置动作
+if st.session_state.is_done:
+    st.markdown("---")
+    if st.button("✨ 归档并处理下一个工单", type="primary", use_container_width=True):
+        # 清空记忆，重新开始
+        del st.session_state.messages
+        del st.session_state.display_messages
+        del st.session_state.is_done
         st.rerun()
