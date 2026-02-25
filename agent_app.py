@@ -81,30 +81,33 @@ if role == "👨‍🔧 一线工程师 (FE)":
                         st.markdown(prompt)
 
                     with st.chat_message("assistant"):
-                        with st.spinner("Agent 正在推演逻辑..."):
+                        with st.spinner("Agent 正在严苛审视排查逻辑..."):
                             try:
                                 response = client.chat.completions.create(
                                     model="moonshot-v1-8k",
                                     messages=st.session_state.messages,
-                                    temperature=0.2,
+                                    temperature=0.1, # 极其理性的温度，避免随机发散
                                 )
                                 reply = response.choices[0].message.content
                                 
-                                # 【顶级防误触机制：魔法系统指令拦截】
+                                # 【极度强硬的路由判定器】
                                 if "<FINAL_REPORT>" in reply:
                                     st.session_state.is_done = True
-                                    # 剥离隐藏标签，并替换为优雅的标题展示给工程师看
                                     reply = reply.replace("<FINAL_REPORT>", "### 📄 最终交付报告\n\n").strip()
+                                else:
+                                    # 如果 AI 没有给出完结信号，强制剥离内部追问标签
+                                    reply = reply.replace("[打回追问]", "").strip()
                                 
                                 st.markdown(reply)
                                 
                                 st.session_state.messages.append({"role": "assistant", "content": reply})
                                 st.session_state.display_messages.append({"role": "assistant", "content": reply})
                                 
-                                if st.session_state.is_done:
-                                    st.rerun()
                             except Exception as e:
                                 st.error(f"API 出错：{e}")
+                
+                # 【终极状态同步】无论走到哪个分支，立刻刷新前端保持状态完全一致
+                st.rerun()
 
         # ================= 后台双路提取：JSON 表单 + 技术总监点评 =================
         if st.session_state.is_done and st.session_state.extracted_data is None:
