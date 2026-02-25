@@ -250,7 +250,15 @@ if role == "👨‍🔧 一线工程师 (FE)":
                 h_id, h_sn, h_fault, h_time, h_report, h_reps = row
                 with st.expander(f"🔒 历史工单 #{h_id} | SN: {h_sn} | 时间: {h_time}"):
                     st.markdown(h_report)
-                    reps_list = json.loads(h_reps) if h_reps else []
+# 增加安全的 JSON 解析，防止旧数据导致应用崩溃
+                    reps_list = []
+                    if h_reps:
+                        try:
+                            reps_list = json.loads(h_reps)
+                        except Exception:
+                            # 如果不是 JSON 格式（旧数据），就把它包成一个普通字典显示
+                            reps_list = [{"历史文本记录": h_reps}]
+                            
                     if reps_list:
                         st.markdown("**换件流水：**")
                         st.table(reps_list) # 优雅地渲染成表格
@@ -280,12 +288,17 @@ elif role == "👔 交付总监/PM":
                 st.markdown(t_critique)
                 
                 st.divider()
-                tab1, tab2 = st.tabs(["📝 结构化换件流水", "📄 原始闭环报告"])
+tab1, tab2 = st.tabs(["📝 结构化换件流水", "📄 原始闭环报告"])
                 with tab1:
-                    reps_list = json.loads(t_reps) if t_reps else []
+                    # 增加安全的 JSON 解析
+                    reps_list = []
+                    if t_reps:
+                        try:
+                            reps_list = json.loads(t_reps)
+                        except Exception:
+                            reps_list = [{"历史文本记录": t_reps}]
+                            
                     if reps_list:
                         st.table(reps_list) # 以数据表形式完美展现多次换件详情
                     else:
                         st.write("无换件记录")
-                with tab2:
-                    st.markdown(t_report)
