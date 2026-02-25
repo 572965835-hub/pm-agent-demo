@@ -161,17 +161,19 @@ if role == "👨‍🔧 一线工程师 (FE)":
                                         final_reply = f"### 📄 最终交付报告\n\n{st.session_state.final_report}"
                                         st.markdown(final_reply)
                                         
+                                        # 【修复核心：严格遵守 API 的 Tool Call 闭环规范】
+                                        # 1. 先把大模型的工具调用请求存入历史
                                         st.session_state.messages.append(response_msg)
+                                        # 2. 立即补充一条 role="tool" 的消息作为反馈，告诉 API 工具已经执行完毕
+                                        st.session_state.messages.append({
+                                            "role": "tool",
+                                            "tool_call_id": tool_call.id,
+                                            "name": tool_call.function.name,
+                                            "content": "{\"status\": \"success\", \"message\": \"工单数据已成功提取\"}"
+                                        })
+                                        
                                         st.session_state.display_messages.append({"role": "assistant", "content": final_reply})
                                         st.rerun()
-                                else:
-                                    reply = response_msg.content
-                                    st.markdown(reply)
-                                    st.session_state.messages.append({"role": "assistant", "content": reply})
-                                    st.session_state.display_messages.append({"role": "assistant", "content": reply})
-                                    
-                            except Exception as e:
-                                st.error(f"API 出错：{e}")
 
         # 后台单路专家审计：强制 JSON 工具输出
         if st.session_state.is_done and st.session_state.ai_critique is None:
