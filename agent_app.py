@@ -4,7 +4,6 @@ import sqlite3
 import json
 from datetime import datetime
 
-# 引入我们分离出去的外部 Prompt 库
 from prompts import AGENT_SYSTEM_PROMPT, JSON_EXTRACTION_PROMPT, CRITIQUE_PROMPT
 
 # ================= 1. 数据库初始化 =================
@@ -60,51 +59,53 @@ if role == "👨‍🔧 一线工程师 (FE)":
     
     with tab_work:
         if "messages" not in st.session_state:
-            # 这里直接调用外部导入的 AGENT_SYSTEM_PROMPT
             st.session_state.messages = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
             st.session_state.display_messages = [{"role": "assistant", "content": "你好！请描述现场排查流水账。如果有 SN号、换件 QN 码也请一并带上。"}]
             st.session_state.is_done = False
             st.session_state.extracted_data = None
             st.session_state.ai_critique = None
 
-        for msg in st.session_state.display_messages:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
+        # 【升级点：聊天窗口“沉底固定”与“局部滚动”】
+        messages_container = st.container(height=450)
+        with messages_container:
+            for msg in st.session_state.display_messages:
+                with st.chat_message(msg["role"]):
+                    st.markdown(msg["content"])
 
         if not st.session_state.is_done:
-            if prompt := st.chat_input("请输入排查记录或回答..."):
+            if prompt := st.chat_input("请输入现场排查流水账..."):
                 st.session_state.display_messages.append({"role": "user", "content": prompt})
                 st.session_state.messages.append({"role": "user", "content": prompt})
-                with st.chat_message("user"):
-                    st.markdown(prompt)
+                
+                with messages_container: # 确保用户新发的消息也渲染在固定容器内
+                    with st.chat_message("user"):
+                        st.markdown(prompt)
 
-                with st.chat_message("assistant"):
-                    with st.spinner("Agent 正在推演逻辑..."):
-                        try:
-                            response = client.chat.completions.create(
-                                model="moonshot-v1-8k",
-                                messages=st.session_state.messages,
-                                temperature=0.2,
-                            )
-                            reply = response.choices[0].message.content
-                            st.markdown(reply)
-                            
-                            st.session_state.messages.append({"role": "assistant", "content": reply})
-                            st.session_state.display_messages.append({"role": "assistant", "content": reply})
-                            
-                            if "【最终交付报告】" in reply:
-                                st.session_state.is_done = True
-                                st.rerun()
-                        except Exception as e:
-                            st.error(f"API 出错：{e}")
+                    with st.chat_message("assistant"):
+                        with st.spinner("Agent 正在推演逻辑..."):
+                            try:
+                                response = client.chat.completions.create(
+                                    model="moonshot-v1-8k",
+                                    messages=st.session_state.messages,
+                                    temperature=0.2,
+                                )
+                                reply = response.choices[0].message.content
+                                st.markdown(reply)
+                                
+                                st.session_state.messages.append({"role": "assistant", "content": reply})
+                                st.session_state.display_messages.append({"role": "assistant", "content": reply})
+                                
+                                if "【最终交付报告】" in reply:
+                                    st.session_state.is_done = True
+                                    st.rerun()
+                            except Exception as e:
+                                st.error(f"API 出错：{e}")
 
         # ================= 后台双路提取：JSON 表单 + 技术总监点评 =================
         if st.session_state.is_done and st.session_state.extracted_data is None:
-            # 任务 1：提取 JSON 表单
             with st.spinner("🔄 逻辑已闭环！正在提取表单数据..."):
                 try:
                     extract_msgs = st.session_state.messages.copy()
-                    # 直接调用外部导入的 JSON_EXTRACTION_PROMPT
                     extract_msgs.append({"role": "user", "content": JSON_EXTRACTION_PROMPT})
                     json_res = client.chat.completions.create(
                         model="moonshot-v1-8k", messages=extract_msgs, temperature=0.1
@@ -115,11 +116,9 @@ if role == "👨‍🔧 一线工程师 (FE)":
                     st.error(f"提取表单失败: {e}")
                     st.session_state.extracted_data = {"replacements": []}
 
-            # 任务 2：生成技术总监严苛点评
             with st.spinner("🧠 全球顶尖技术总监正在撰写深度复盘报告..."):
                 try:
                     crit_msgs = st.session_state.messages.copy()
-                    # 直接调用外部导入的 CRITIQUE_PROMPT
                     crit_msgs.append({"role": "user", "content": CRITIQUE_PROMPT})
                     crit_res = client.chat.completions.create(
                         model="moonshot-v1-8k", messages=crit_msgs, temperature=0.3
@@ -152,9 +151,10 @@ if role == "👨‍🔧 一线工程师 (FE)":
                 final_reps_data = []
                 for i, rep in enumerate(reps):
                     st.markdown(f"**第 {i+1} 次更换**")
+                    # 【升级点：备件更换表单的“扩容”与“自适应”】
                     c1, c2, c3 = st.columns(3)
                     t_val = c1.text_input(f"更换时间", value=rep.get("replace_time", ""), key=f"t_{i}")
-                    i_val = c2.text_input(f"更换信息描述", value=rep.get("action_info", ""), key=f"i_{i}")
+                    i_val = c2.text_area(f"更换信息描述", value=rep.get("action_info", ""), key=f"i_{i}", height=100)
                     nt_val = c3.text_input(f"换上件类型", value=rep.get("new_type", ""), key=f"nt_{i}")
                     
                     c4, c5, c6 = st.columns(3)
@@ -190,7 +190,6 @@ if role == "👨‍🔧 一线工程师 (FE)":
                     del st.session_state.ai_critique
                     st.rerun()
 
-    # ================= 我的历史工单 (只读区) =================
     with tab_history:
         conn = sqlite3.connect('tickets.db')
         c = conn.cursor()
@@ -221,8 +220,34 @@ if role == "👨‍🔧 一线工程师 (FE)":
 #                          👔 交付总监/PM 视图 (Dashboard View)
 # =====================================================================
 elif role == "👔 交付总监/PM":
+
+    # 【升级点：利用 @st.dialog 打造弹窗详情页】
+    @st.dialog("🎫 工单详细审计报告", width="large")
+    def show_ticket_dialog(t_id, t_name, t_sn, t_fault, t_time, t_critique, t_report, t_reps):
+        st.subheader(f"工单 #{t_id} | 责任人: {t_name}")
+        st.caption(f"设备SN: {t_sn} | 故障类型: {t_fault} | 提交时间: {t_time}")
+        
+        # 【升级点：语义修正，使用 warning 代替 error】
+        st.warning(f"**🧠 AI 技术总监审计点评：**\n\n{t_critique}")
+        
+        tab1, tab2 = st.tabs(["📝 结构化换件流水", "📄 原始闭环报告"])
+        with tab1:
+            reps_list = []
+            if t_reps:
+                try:
+                    reps_list = json.loads(t_reps)
+                except Exception:
+                    reps_list = [{"历史文本记录": t_reps}]
+                    
+            if reps_list:
+                st.table(reps_list) 
+            else:
+                st.write("无换件记录")
+        with tab2:
+            st.markdown(t_report)
+
     st.title("📊 全局交付审计与技术总监看板")
-    st.caption("上帝视角：查看所有结构化工单，并审核 AI 技术总监给出的严苛复盘打分。")
+    st.caption("全局视野：掌控工单流转，快速审核 AI 专家提供的交付动作复盘。")
     
     conn = sqlite3.connect('tickets.db')
     c = conn.cursor()
@@ -233,28 +258,45 @@ elif role == "👔 交付总监/PM":
     if not rows:
         st.info("当前工单库为空，等待工程师提交。")
     else:
+        # 【升级点：增加顶部核心指标区 Metrics】
+        total_tickets = len(rows)
+        replaced_count = 0
+        for r in rows:
+            try:
+                # 简单统计是否包含有效的换件流水
+                reps = json.loads(r[7])
+                if reps and len(reps) > 0 and "更换时间" in reps[0]: 
+                    replaced_count += 1
+            except:
+                pass
+
+        col1, col2, col3 = st.columns(3)
+        col1.metric(label="今日工单总数", value=total_tickets)
+        col2.metric(label="涉及换件单数", value=replaced_count)
+        col3.metric(label="智能审计覆盖率", value="100%")
+        
+        st.divider()
+        st.markdown("### 📋 工单数据流转中心")
+
+        # 【升级点：将列表降级为数据网格 Data Grid】
+        # 表头排版
+        hc1, hc2, hc3, hc4, hc5 = st.columns([1, 2, 2, 3, 2])
+        hc1.write("**工单ID**")
+        hc2.write("**责任人**")
+        hc3.write("**故障类型**")
+        hc4.write("**提交时间**")
+        hc5.write("**操作**")
+        st.markdown("---")
+        
+        # 遍历数据行
         for row in rows:
             t_id, t_name, t_sn, t_fault, t_time, t_critique, t_report, t_reps = row
+            c1, c2, c3, c4, c5 = st.columns([1, 2, 2, 3, 2])
+            c1.write(f"#{t_id}")
+            c2.write(t_name)
+            c3.write(t_fault)
+            c4.write(t_time)
             
-            with st.expander(f"🎫 工单 #{t_id} | 责任人: {t_name} | SN: {t_sn} | 提交时间: {t_time}", expanded=False):
-                st.error("### 🧠 技术总监/AI 审计报告")
-                st.markdown(t_critique)
-                
-                st.divider()
-                tab1, tab2 = st.tabs(["📝 结构化换件流水", "📄 原始闭环报告"])
-                
-                with tab1:
-                    reps_list = []
-                    if t_reps:
-                        try:
-                            reps_list = json.loads(t_reps)
-                        except Exception:
-                            reps_list = [{"历史文本记录": t_reps}]
-                            
-                    if reps_list:
-                        st.table(reps_list) 
-                    else:
-                        st.write("无换件记录")
-                
-                with tab2:
-                    st.markdown(t_report)
+            # 点击按钮触发上方定义的 st.dialog
+            if c5.button("查看详情", key=f"btn_{t_id}"):
+                show_ticket_dialog(t_id, t_name, t_sn, t_fault, t_time, t_critique, t_report, t_reps)
