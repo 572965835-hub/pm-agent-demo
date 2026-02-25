@@ -1,12 +1,12 @@
 import streamlit as st
 import time
-import google.generativeai as genai
+from openai import OpenAI
 
-# 配置 Gemini API（安全地从 Streamlit Secrets 中读取）
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-
-# 初始化模型 (使用适合文本处理的模型)
-model = genai.GenerativeModel('gemini-pro')
+# 配置 Kimi (Moonshot) API 客户端
+client = OpenAI(
+    api_key=st.secrets["MOONSHOT_API_KEY"],
+    base_url="https://api.moonshot.cn/v1",
+)
 
 st.set_page_config(page_title="故障单智能复核 Agent", page_icon="🤖", layout="centered")
 st.markdown("<style>#MainMenu {visibility: hidden;} footer {visibility: hidden;}</style>", unsafe_allow_html=True)
@@ -16,13 +16,12 @@ if 'step' not in st.session_state:
 if 'initial_input' not in st.session_state:
     st.session_state.initial_input = ""
 
-st.title("🤖 硬件交付工单智能复核")
+st.title("🤖 硬件交付工单智能复核 (Powered by Kimi)")
 st.caption("AI 自动识别逻辑断层，引导补充规范数据，一键生成交付报告。")
 st.divider()
 
-# ================= 真实调用大模型生成追问 =================
+# ================= 调用 Kimi 生成追问 =================
 def generate_dynamic_questions(initial_record):
-    # 这里嵌入了我们之前精心打磨的“智能工单复核机器人” Prompt
     prompt = f"""
     你现在是一个部署在服务器交付与运维工单系统中的【智能工单复核机器人】。
     你的核心任务是：自动审阅现场工程师提交的故障排查记录，识别其中的逻辑断层和信息缺失，并生成结构化的追问清单。
@@ -39,12 +38,19 @@ def generate_dynamic_questions(initial_record):
     {initial_record}
     """
     try:
-        response = model.generate_content(prompt)
-        return response.text
+        response = client.chat.completions.create(
+            model="moonshot-v1-8k",
+            messages=[
+                {"role": "system", "content": "你是一个严谨的项目管理助手。"},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+        )
+        return response.choices[0].message.content
     except Exception as e:
-        return f"调用 AI 模型时出错啦，请检查 API Key 或网络：{e}"
+        return f"调用 Kimi 模型时出错啦，请检查 API Key：{e}"
 
-# ================= 真实调用大模型生成最终报告 =================
+# ================= 调用 Kimi 生成最终报告 =================
 def generate_dynamic_report(initial_record, answers):
     prompt = f"""
     你是一位资深的服务器交付项目经理。请根据工程师最初提供的排查记录，以及他刚刚补充的详细解答，
@@ -56,11 +62,18 @@ def generate_dynamic_report(initial_record, answers):
     工程师补充的详细解答：
     {answers}
 
-    请直接输出报告正文，包含“初始故障现象”、“排查过程与逻辑闭环”、“最终结果与验收确认”三个标准段落。不要有其他废话。
+    请直接输出报告正文，包含“一、初始故障现象”、“二、排查过程与逻辑闭环”、“三、最终结果与验收确认”三个标准段落。不要有其他废话。
     """
     try:
-        response = model.generate_content(prompt)
-        return response.text
+        response = client.chat.completions.create(
+            model="moonshot-v1-8k",
+            messages=[
+                {"role": "system", "content": "你是一个资深的服务器交付项目经理。"},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.5,
+        )
+        return response.choices[0].message.content
     except Exception as e:
         return f"生成报告时出错啦：{e}"
 
@@ -76,8 +89,7 @@ if st.session_state.step == 1:
             st.warning("请先输入排查记录哦！")
         else:
             st.session_state.initial_input = initial_input
-            with st.spinner('AI 正在推演排查逻辑，寻找信息断层...'):
-                # 真正调用 AI 接口！
+            with st.spinner('Kimi 正在推演排查逻辑，寻找信息断层...'):
                 st.session_state.dynamic_questions = generate_dynamic_questions(initial_input)
             st.session_state.step = 2
             st.rerun()
@@ -90,7 +102,6 @@ elif st.session_state.step == 2:
         st.write("我分析完了，基于你提供的记录，你需要补充以下关键细节才能闭环：")
         
     st.markdown("### 🔍 AI 智能追问")
-    # 展示大模型真实思考后生成的追问
     st.markdown(st.session_state.dynamic_questions)
     
     st.markdown("---")
@@ -106,8 +117,7 @@ elif st.session_state.step == 2:
             if answers_input.strip() == "":
                 st.warning("请填写补充信息！")
             else:
-                with st.spinner('AI 正在撰写标准排查报告...'):
-                    # 真正调用 AI 接口！
+                with st.spinner('Kimi 正在撰写标准排查报告...'):
                     st.session_state.final_report = generate_dynamic_report(
                         st.session_state.initial_input, 
                         answers_input
@@ -116,10 +126,9 @@ elif st.session_state.step == 2:
                 st.rerun()
 
 elif st.session_state.step == 3:
-    st.success("🎉 报告已由 AI 融合生成！逻辑已闭环，符合 PM 审计标准。")
+    st.success("🎉 报告已由 Kimi 融合生成！逻辑已闭环，符合 PM 审计标准。")
     report_container = st.container(border=True)
     with report_container:
-        # 展示大模型生成的最终报告
         st.markdown(st.session_state.final_report)
     
     if st.button("✨ 处理下一个工单", type="primary"):
