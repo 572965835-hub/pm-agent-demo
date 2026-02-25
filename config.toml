@@ -1,0 +1,10 @@
+[theme]
+# 整体色调：深蓝
+primaryColor = "#1E3A8A"
+# 背景色：极浅的灰蓝色，护眼且有质感
+backgroundColor = "#F8FAFC"
+# 侧边栏/浮层背景色：纯白，拉开层次
+secondaryBackgroundColor = "#FFFFFF"
+# 文本颜色：深灰偏蓝
+textColor = "#0F172A"
+font = "sans serif"
